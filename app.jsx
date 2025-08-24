@@ -63,75 +63,99 @@ function App() {
 
   function handleSubmit(e) {
     e.preventDefault();
+    console.log("🚀 Formulaire soumis");
     setError("");
     setResult(null);
 
+    console.log("📝 Validation des champs...");
     if (!prenom.trim()) {
+      console.log("❌ Prénom manquant");
       setError("Veuillez entrer votre prénom.");
       return;
     }
     const emailOk = /.+@.+\..+/.test(email.trim());
     if (!emailOk) {
+      console.log("❌ Email invalide:", email);
       setError("Veuillez entrer un email valide.");
       return;
     }
     if (!day || !monthValue || !year) {
+      console.log("❌ Date incomplète:", { day, monthValue, year });
       setError("Veuillez compléter votre date de naissance.");
       return;
     }
     if (!isValidDate(year, monthValue, day)) {
+      console.log("❌ Date invalide:", { day, monthValue, year });
       setError("La date saisie n'est pas valide.");
       return;
     }
 
+    console.log("✅ Validation OK");
     setLoading(true);
+    
     // Calcul local simple (ex: Chemin de vie)
     const lifePath = computeLifePathNumber({ day, month: monthValue, year });
+    console.log("🔢 Chemin de vie calculé:", lifePath);
 
-    // Point d'accroche Systeme.io (webhook/automation)
-    // Remplacer NEXT_URL par l'URL webhook Systeme.io quand elle sera connue.
     const payload = {
       firstName: prenom.trim(),
       email: email.trim(),
       birthDate: `${year}-${String(monthValue).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
       lifePathNumber: lifePath
     };
+    console.log("📦 Payload préparé:", payload);
 
-    // Envoi webhook Make si présent, sinon API backend Systeme.io, sinon action de formulaire Systeme.io
+    // Détection des endpoints configurés
     const rootEl = document.getElementById("root");
     const webhookUrl = rootEl?.getAttribute("data-webhook") || "";
     const systemeAction = rootEl?.getAttribute("data-systeme-action") || "";
     const systemeApi = rootEl?.getAttribute("data-systeme-api") || "";
+    
+    console.log("🔍 Configuration détectée:");
+    console.log("  - webhookUrl:", webhookUrl || "(vide)");
+    console.log("  - systemeAction:", systemeAction || "(vide)");
+    console.log("  - systemeApi:", systemeApi || "(vide)");
+
     if (webhookUrl) {
+      console.log("📡 Envoi vers webhook Make...");
       fetch(webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       })
         .then(async (res) => {
+          console.log("📡 Réponse webhook:", res.status, res.statusText);
           const text = await res.text().catch(() => "");
+          console.log("📡 Contenu réponse:", text.slice(0, 200));
           setResult({
-            message: `Merci ${prenom}! Voici votre nombre de chemin de vie: ${lifePath}.`,
+            message: `Merci ${prenom}! Votre nombre de chemin de vie: ${lifePath}.`,
             payload,
             response: text.slice(0, 500)
           });
         })
         .catch((err) => {
+          console.error("❌ Erreur webhook:", err);
           setResult({
             message: `Merci ${prenom}! (Envoi webhook non abouti)`,
             payload,
             error: String(err)
           });
         })
-        .finally(() => setLoading(false));
+        .finally(() => {
+          console.log("📡 Webhook terminé");
+          setLoading(false);
+        });
     } else if (systemeApi) {
+      console.log("🔌 Envoi vers API Systeme.io...");
       fetch(systemeApi, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       })
         .then(async (res) => {
+          console.log("🔌 Réponse API:", res.status, res.statusText);
           const text = await res.text().catch(() => "");
+          console.log("🔌 Contenu réponse:", text.slice(0, 200));
           setResult({
             message: `Merci ${prenom}! Contact envoyé via API Systeme.io. Chemin de vie: ${lifePath}.`,
             payload,
@@ -139,25 +163,31 @@ function App() {
           });
         })
         .catch((err) => {
+          console.error("❌ Erreur API Systeme.io:", err);
           setResult({
             message: `Merci ${prenom}! (API Systeme.io non aboutie)`,
             payload,
             error: String(err)
           });
         })
-        .finally(() => setLoading(false));
+        .finally(() => {
+          console.log("🔌 API Systeme.io terminée");
+          setLoading(false);
+        });
     } else if (systemeAction) {
-      // Envoi direct vers un formulaire Systeme.io (action HTML)
+      console.log("📋 Envoi vers formulaire Systeme.io...");
       const formData = new FormData();
-      // Adapte les names selon l'intégration Systeme.io (souvent: email, first_name, custom_fields[slug])
       formData.append("email", payload.email);
       formData.append("first_name", payload.firstName);
       formData.append("custom_fields[date_de_naissance]", payload.birthDate);
       formData.append("custom_fields[life_path_number]", String(payload.lifePathNumber));
+      console.log("📋 FormData préparé");
 
       fetch(systemeAction, { method: "POST", body: formData })
         .then(async (res) => {
+          console.log("📋 Réponse formulaire:", res.status, res.statusText);
           const text = await res.text().catch(() => "");
+          console.log("📋 Contenu réponse:", text.slice(0, 200));
           setResult({
             message: `Merci ${prenom}! Contact envoyé à Systeme.io. Nombre de chemin de vie: ${lifePath}.`,
             payload,
@@ -165,21 +195,26 @@ function App() {
           });
         })
         .catch((err) => {
+          console.error("❌ Erreur formulaire Systeme.io:", err);
           setResult({
             message: `Merci ${prenom}! (Envoi Systeme.io non abouti)`,
             payload,
             error: String(err)
           });
         })
-        .finally(() => setLoading(false));
+        .finally(() => {
+          console.log("📋 Formulaire Systeme.io terminé");
+          setLoading(false);
+        });
     } else {
-      // Fallback: pas d’URL -> affichage local uniquement
+      console.log("💻 Mode local uniquement (aucun endpoint configuré)");
       setTimeout(() => {
         setResult({
           message: `Merci ${prenom}! Voici votre nombre de chemin de vie: ${lifePath}.`,
           payload
         });
         setLoading(false);
+        console.log("💻 Affichage local terminé");
       }, 250);
     }
   }
