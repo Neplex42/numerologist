@@ -48,72 +48,122 @@ function isValidDate(y, m, d) {
   );
 }
 
-// Composant TTS avec sous-titres
+// Composant TTS avec ElevenLabs
 function TTSReader({ text, segments }) {
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [currentSegmentIndex, setCurrentSegmentIndex] = React.useState(-1);
-  const [speechSynthesis, setSpeechSynthesis] = React.useState(null);
-  const [currentUtterance, setCurrentUtterance] = React.useState(null);
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [currentAudio, setCurrentAudio] = React.useState(null);
 
-  React.useEffect(() => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      setSpeechSynthesis(window.speechSynthesis);
-    }
-  }, []);
-
-  const playTTS = () => {
-    if (!speechSynthesis || !text) return;
-
-    // Arrêter toute lecture en cours
-    speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'fr-FR';
-    utterance.rate = 0.8;
-    utterance.pitch = 1;
-    utterance.volume = 0.9;
-
-    // Calcul approximatif du temps par segment
-    const wordsPerSegment = segments.map(seg => seg.split(' ').length);
-    const totalWords = wordsPerSegment.reduce((sum, count) => sum + count, 0);
-    const estimatedDuration = text.split(' ').length * 0.6; // ~0.6 secondes par mot
-    
-    let currentTime = 0;
-    segments.forEach((segment, index) => {
-      const segmentDuration = (wordsPerSegment[index] / totalWords) * estimatedDuration * 1000;
-      setTimeout(() => {
-        if (isPlaying) {
-          setCurrentSegmentIndex(index);
-        }
-      }, currentTime);
-      currentTime += segmentDuration;
+  const synthesizeWithElevenLabs = async (text) => {
+    // Appel à notre API route sécurisée
+    const response = await fetch('/api/tts', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text })
     });
 
-    utterance.onstart = () => {
-      setIsPlaying(true);
-      setCurrentSegmentIndex(0);
-    };
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Erreur serveur: ${response.status}`);
+    }
 
-    utterance.onend = () => {
+    const data = await response.json();
+    
+    if (!data.success || !data.audio) {
+      throw new Error('Réponse serveur invalide');
+    }
+
+    // Convertir le base64 en ArrayBuffer
+    const binaryString = window.atob(data.audio);
+    const arrayBuffer = new ArrayBuffer(binaryString.length);
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    for (let i = 0; i < binaryString.length; i++) {
+      uint8Array[i] = binaryString.charCodeAt(i);
+    }
+    
+    return arrayBuffer;
+  };
+
+  const playTTS = async () => {
+    if (!text || isLoading) return;
+
+    setError(null);
+    setIsLoading(true);
+
+    try {
+      // Arrêter l'audio en cours
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      }
+
+      // Générer l'audio avec ElevenLabs
+      const audioBuffer = await synthesizeWithElevenLabs(text);
+      const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+
+      setCurrentAudio(audio);
+
+      // Calcul du timing des sous-titres
+      const wordsPerSegment = segments.map(seg => seg.split(' ').length);
+      const totalWords = wordsPerSegment.reduce((sum, count) => sum + count, 0);
+      
+      audio.onloadedmetadata = () => {
+        const duration = audio.duration * 1000; // en millisecondes
+        let currentTime = 0;
+        
+        segments.forEach((segment, index) => {
+          const segmentDuration = (wordsPerSegment[index] / totalWords) * duration;
+          setTimeout(() => {
+            if (isPlaying && !audio.paused) {
+              setCurrentSegmentIndex(index);
+            }
+          }, currentTime);
+          currentTime += segmentDuration;
+        });
+      };
+
+      audio.onplay = () => {
+        setIsPlaying(true);
+        setCurrentSegmentIndex(0);
+      };
+
+      audio.onended = () => {
+        setIsPlaying(false);
+        setCurrentSegmentIndex(-1);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.onerror = () => {
+        setIsPlaying(false);
+        setCurrentSegmentIndex(-1);
+        setError('Erreur lors de la lecture audio');
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      await audio.play();
+    } catch (err) {
+      console.error('Erreur TTS:', err);
+      setError(err.message || 'Erreur lors de la génération audio');
       setIsPlaying(false);
-      setCurrentSegmentIndex(-1);
-    };
-
-    utterance.onerror = () => {
-      setIsPlaying(false);
-      setCurrentSegmentIndex(-1);
-    };
-
-    setCurrentUtterance(utterance);
-    speechSynthesis.speak(utterance);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const stopTTS = () => {
-    if (speechSynthesis) {
-      speechSynthesis.cancel();
-      setIsPlaying(false);
-      setCurrentSegmentIndex(-1);
+    if (currentAudio) {
+      currentAudio.pause();
+      currentAudio.currentTime = 0;
     }
+    setIsPlaying(false);
+    setCurrentSegmentIndex(-1);
   };
 
   if (!text || !segments) return null;
@@ -124,12 +174,13 @@ function TTSReader({ text, segments }) {
         <button 
           onClick={isPlaying ? stopTTS : playTTS}
           className="tts-button"
-          disabled={!speechSynthesis}
+          disabled={isLoading}
         >
-          {isPlaying ? "⏸️ Arrêter" : "🔊 Écouter"}
+          {isLoading ? "🔄 Génération..." : (isPlaying ? "⏸️ Arrêter" : "🎙️ Écouter (IA)")}
         </button>
-        {!speechSynthesis && (
-          <span className="tts-error">TTS non supporté par ce navigateur</span>
+        
+        {error && (
+          <span className="tts-error">❌ {error}</span>
         )}
       </div>
       
