@@ -48,6 +48,105 @@ function isValidDate(y, m, d) {
   );
 }
 
+// Composant TTS avec sous-titres
+function TTSReader({ text, segments }) {
+  const [isPlaying, setIsPlaying] = React.useState(false);
+  const [currentSegmentIndex, setCurrentSegmentIndex] = React.useState(-1);
+  const [speechSynthesis, setSpeechSynthesis] = React.useState(null);
+  const [currentUtterance, setCurrentUtterance] = React.useState(null);
+
+  React.useEffect(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      setSpeechSynthesis(window.speechSynthesis);
+    }
+  }, []);
+
+  const playTTS = () => {
+    if (!speechSynthesis || !text) return;
+
+    // Arrêter toute lecture en cours
+    speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'fr-FR';
+    utterance.rate = 0.8;
+    utterance.pitch = 1;
+    utterance.volume = 0.9;
+
+    // Calcul approximatif du temps par segment
+    const wordsPerSegment = segments.map(seg => seg.split(' ').length);
+    const totalWords = wordsPerSegment.reduce((sum, count) => sum + count, 0);
+    const estimatedDuration = text.split(' ').length * 0.6; // ~0.6 secondes par mot
+    
+    let currentTime = 0;
+    segments.forEach((segment, index) => {
+      const segmentDuration = (wordsPerSegment[index] / totalWords) * estimatedDuration * 1000;
+      setTimeout(() => {
+        if (isPlaying) {
+          setCurrentSegmentIndex(index);
+        }
+      }, currentTime);
+      currentTime += segmentDuration;
+    });
+
+    utterance.onstart = () => {
+      setIsPlaying(true);
+      setCurrentSegmentIndex(0);
+    };
+
+    utterance.onend = () => {
+      setIsPlaying(false);
+      setCurrentSegmentIndex(-1);
+    };
+
+    utterance.onerror = () => {
+      setIsPlaying(false);
+      setCurrentSegmentIndex(-1);
+    };
+
+    setCurrentUtterance(utterance);
+    speechSynthesis.speak(utterance);
+  };
+
+  const stopTTS = () => {
+    if (speechSynthesis) {
+      speechSynthesis.cancel();
+      setIsPlaying(false);
+      setCurrentSegmentIndex(-1);
+    }
+  };
+
+  if (!text || !segments) return null;
+
+  return (
+    <div className="tts-container">
+      <div className="tts-controls">
+        <button 
+          onClick={isPlaying ? stopTTS : playTTS}
+          className="tts-button"
+          disabled={!speechSynthesis}
+        >
+          {isPlaying ? "⏸️ Arrêter" : "🔊 Écouter"}
+        </button>
+        {!speechSynthesis && (
+          <span className="tts-error">TTS non supporté par ce navigateur</span>
+        )}
+      </div>
+      
+      <div className="subtitles-container">
+        {segments.map((segment, index) => (
+          <p 
+            key={index} 
+            className={`subtitle ${index === currentSegmentIndex ? 'active' : ''}`}
+          >
+            {segment}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [prenom, setPrenom] = React.useState("");
   const [email, setEmail] = React.useState("");
@@ -57,9 +156,46 @@ function App() {
   const [error, setError] = React.useState("");
   const [result, setResult] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
+  const [showTTS, setShowTTS] = React.useState(false);
 
   const years = React.useMemo(() => generateYears(1917), []);
   const days = React.useMemo(() => generateDays(), []);
+
+  // Génération du texte personnalisé d'exemple
+  const generatePersonalizedText = (userData) => {
+    const monthNames = {
+      1: "janvier", 2: "février", 3: "mars", 4: "avril", 5: "mai", 6: "juin",
+      7: "juillet", 8: "août", 9: "septembre", 10: "octobre", 11: "novembre", 12: "décembre"
+    };
+    
+    const lifePathMeaning = {
+      1: "vous êtes un leader naturel, indépendant et pionnier",
+      2: "vous êtes un diplomate, coopératif et sensible aux autres",
+      3: "vous êtes créatif, expressif et communicatif",
+      4: "vous êtes travailleur, organisé et fiable",
+      5: "vous êtes aventurier, curieux et aimez la liberté",
+      6: "vous êtes protecteur, aimant et orienté famille",
+      7: "vous êtes introspectif, spirituel et analytique",
+      8: "vous êtes ambitieux, matérialiste et orienté succès",
+      9: "vous êtes humanitaire, généreux et visionnaire",
+      11: "vous êtes intuitif, inspirateur et idéaliste",
+      22: "vous êtes un maître constructeur, visionnaire et pratique"
+    };
+
+    const birthMonth = monthNames[userData.birthDate ? new Date(userData.birthDate).getMonth() + 1 : ''];
+    const birthDay = userData.birthDate ? new Date(userData.birthDate).getDate() : '';
+    const birthYear = userData.birthDate ? new Date(userData.birthDate).getFullYear() : '';
+    
+    return `Bonjour ${userData.firstName} ! Merci d'avoir partagé vos informations avec nous. 
+Né le ${birthDay} ${birthMonth} ${birthYear}, votre chemin de vie numéro ${userData.lifePathNumber} révèle des aspects fascinants de votre personnalité. 
+Selon la numérologie, ${lifePathMeaning[userData.lifePathNumber] || "vous avez un chemin unique"}. 
+Votre adresse email ${userData.email} a été enregistrée pour vous envoyer votre analyse complète. 
+Cette lecture personnalisée vous aidera à mieux comprendre vos forces naturelles et votre mission de vie.`;
+  };
+
+  const getTextSegments = (text) => {
+    return text.split('. ').map(sentence => sentence.trim()).filter(sentence => sentence.length > 0);
+  };
 
   function handleSubmit(e) {
     e.preventDefault();
@@ -272,9 +408,23 @@ function App() {
         {result && (
           <div className="results">
             <div className="success">{result.message}</div>
-            <pre style={{ whiteSpace: "pre-wrap", background: "#f1f5f9", padding: 12, borderRadius: 8, overflowX: "auto" }}>
-              {JSON.stringify(result.payload, null, 2)}
-            </pre>
+            
+            {result.payload && (
+              <div className="personalized-reading">
+                <h3>🔮 Votre lecture personnalisée</h3>
+                <TTSReader 
+                  text={generatePersonalizedText(result.payload)} 
+                  segments={getTextSegments(generatePersonalizedText(result.payload))}
+                />
+              </div>
+            )}
+            
+            <details className="debug-info">
+              <summary>Informations techniques (cliquer pour afficher)</summary>
+              <pre style={{ whiteSpace: "pre-wrap", background: "#f1f5f9", padding: 12, borderRadius: 8, overflowX: "auto" }}>
+                {JSON.stringify(result.payload, null, 2)}
+              </pre>
+            </details>
           </div>
         )}
       </section>
